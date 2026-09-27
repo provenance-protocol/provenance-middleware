@@ -207,4 +207,6 @@ result.trustworthy  // both of the above
 All four should be as shown. If `location` is `unchecked`, your identifier does
 not name this host — see step 2.
 
-## MIT License
+## License
+
+Apache License 2.0 — see [LICENSE](./LICENSE). Versions before 0.3.2 were released under MIT.
