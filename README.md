@@ -131,6 +131,7 @@ const { declaration, json } = await prepare({ declaration: './PROVENANCE.yml' })
 | `onNotify` | Called with each delivery outcome. |
 | `notices` | Further signed notices to publish, e.g. incidents. |
 | `deliverDeclaration` | Include the full signed declaration in the published notice, for internal services. |
+| `reportResolved` | Report which version of each declared npm dependency is actually installed (from `package-lock.json`, or the path given), so watchers can compare it with the declaration's pins (spec 0.3). |
 
 ## Notices — telling watchers what changed
 
@@ -167,6 +168,18 @@ app.use(provenance({
   notify: ['https://watcher.example/notices'],
 }));
 ```
+
+**Pinned dependencies.** If your declaration pins its dependencies (spec 0.3),
+let the running service say what it actually has installed:
+
+```js
+app.use(provenance({ declaration: './PROVENANCE.yml', reportResolved: true, notify: ['https://watcher.example/notices'] }));
+```
+
+The start-up notice then carries a signed `resolved` list, read from the
+lockfile you deploy — only the dependencies your declaration names. A watcher
+compares it with the pins: a pin that looks honoured but is not shows up as a
+mismatch.
 
 Your organisation then vouches for the agent with
 `npx provenance-protocol affiliate` — see provenance-protocol, *Internal agents*.

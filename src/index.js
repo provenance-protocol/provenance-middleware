@@ -24,6 +24,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { signDeclaration, signAgentChallenge, signNotice } from 'provenance-protocol/keygen';
 import { declarationDigest, keyFingerprint, locateDeclaration } from 'provenance-protocol/verify';
@@ -101,10 +103,14 @@ async function loadDeclaration(declaration) {
  *        you signed with signNotice). Kept in memory; persist them yourself.
  * @param {boolean} [options.deliverDeclaration] Put the full signed declaration inside the
  *        published notice — for internal or private services that watchers cannot fetch.
+ * @param {boolean|string} [options.reportResolved] Report, in the published notice, which
+ *        version of each declared npm dependency this running service actually has installed
+ *        (from package-lock.json, or the lockfile path given), so watchers can compare it with the
+ *        declaration's pins. Only dependencies the declaration names are reported.
  * @returns {Promise<{ declaration: object, provenanceId: string, publicKey: string, json: string,
  *                     published: object, notices: object[] }>}
  */
-export async function prepare({ declaration, privateKey, version, declarationUrl, notices = [], deliverDeclaration = false } = {}) {
+export async function prepare({ declaration, privateKey, version, declarationUrl, notices = [], deliverDeclaration = false, reportResolved = false } = {}) {
   const key = requirePrivateKey(privateKey);
   const parsed = await loadDeclaration(declaration);
 
@@ -130,15 +136,15 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
   // Spec 0.2 signs the whole declaration, so anything served must say 0.2.
   // Refuse to silently upgrade a file that claims 0.1: the author should know
   // their signature is about to cover every field rather than just the identity.
-  if (parsed.provenance !== undefined && parsed.provenance !== '0.2') {
+  if (parsed.provenance !== undefined && parsed.provenance !== '0.2' && parsed.provenance !== '0.3') {
     throw new ProvenanceMiddlewareError(
       `Declaration says provenance: "${parsed.provenance}". This middleware signs the whole declaration ` +
-        '(spec 0.2). Set provenance: "0.2" — under 0.1 the signature would not cover your declared ' +
+        '(spec 0.2 or 0.3). Set provenance: "0.2" — under 0.1 the signature would not cover your declared ' +
         'capabilities or constraints.'
     );
   }
 
-  const body = { ...parsed, provenance: '0.2' };
+  const body = { ...parsed, provenance: parsed.provenance ?? '0.2' };
   if (version) body.version = version;
   // The signature cannot cover itself, and a stale one must never be served.
   body.identity = { ...identity };
@@ -163,9 +169,11 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
   const digest = await declarationDigest(body);
   const url = declarationUrl ?? locateDeclaration(provenanceId);
   let published = null;
+  const resolved = reportResolved ? resolvedFromLockfile(body, reportResolved === true ? 'package-lock.json' : reportResolved) : [];
   if (url) {
     const notice = {
-      notice: '0.1',
+      // Format 0.2 only when there is something it adds; 0.1 otherwise, for the widest readership.
+      notice: resolved.length ? '0.2' : '0.1',
       id: `published-${digest.slice(7, 19)}-${Date.now().toString(36)}`,
       event: 'declaration-published',
       provenance_id: provenanceId,
@@ -178,6 +186,7 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
         // For a service nobody outside can reach, the watcher receives the
         // declaration itself rather than fetching it.
         ...(deliverDeclaration ? { declaration: body } : {}),
+        ...(resolved.length ? { resolved } : {}),
       },
     };
     published = { ...notice, signature: signNotice(key, notice) };
@@ -459,4 +468,28 @@ function readBody(req) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+const NPM_URL = /^https:\/\/www\.npmjs\.com\/package\/((?:@[^/]+\/)?[^/?#]+)/;
+
+/**
+ * What this running service actually has installed, for each npm dependency
+ * the declaration names — read from the lockfile shipped with it. Nothing
+ * beyond the declared dependencies is reported. A lockfile that cannot be read
+ * is warned about, never silently treated as "nothing installed".
+ */
+function resolvedFromLockfile(declaration, lockfile) {
+  const deps = Array.isArray(declaration.dependencies) ? declaration.dependencies : [];
+  const wanted = deps.map((d) => [d, NPM_URL.exec(d?.url ?? '')?.[1]]).filter(([, name]) => name);
+  if (!wanted.length) return [];
+  let lock;
+  try { lock = JSON.parse(readFileSync(resolve(process.cwd(), lockfile), 'utf8')); }
+  catch (e) { warn(`reportResolved: could not read ${lockfile} (${e.message}); no resolved versions are reported.`); return []; }
+  const out = [];
+  for (const [d, name] of wanted) {
+    const entry = lock.packages?.[`node_modules/${name}`] ?? lock.dependencies?.[name];
+    if (!entry?.version) { warn(`reportResolved: ${name} is declared but not in ${lockfile}.`); continue; }
+    out.push({ url: d.url, version: String(entry.version), ...(typeof entry.integrity === 'string' && /^sha(256|384|512)-/.test(entry.integrity) ? { integrity: entry.integrity } : {}) });
+  }
+  return out;
 }

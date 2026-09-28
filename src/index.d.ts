@@ -47,6 +47,13 @@ export interface ProvenanceOptions {
    */
   deliverDeclaration?: boolean;
   /**
+   * Report which version of each declared npm dependency this running service
+   * actually has installed (from package-lock.json, or the path given), for
+   * comparison with the declaration's pins (spec 0.3). Only declared
+   * dependencies are reported.
+   */
+  reportResolved?: boolean | string;
+  /**
    * Watchers to send the signed "declaration published" notice to at startup —
    * any attester, several, or none. Nothing is sent by default.
    */
