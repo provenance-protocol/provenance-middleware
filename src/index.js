@@ -39,6 +39,13 @@ export const NOTICES_PATH = '/.well-known/provenance/notices';
 
 const NOTIFY_TIMEOUT_MS = 10000;
 
+/** How often watchers hear again from a service that keeps running. */
+const DEFAULT_RENEW_MS = 12 * 60 * 60 * 1000;
+const MIN_RENEW_MS = 5 * 60 * 1000;
+// setInterval treats anything larger than this as 1 ms, which would turn a
+// long interval into a flood of notices.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 const MAX_NONCE_LENGTH = 256;
 const NONCE_PATTERN = /^[A-Za-z0-9._~:-]+$/;
 
@@ -169,15 +176,19 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
   const digest = await declarationDigest(body);
   const url = declarationUrl ?? locateDeclaration(provenanceId);
   let published = null;
+  let renew = null;
   const resolved = reportResolved ? resolvedFromLockfile(body, reportResolved === true ? 'package-lock.json' : reportResolved) : [];
-  if (url) {
+  const fingerprint = await keyFingerprint(publicKey);
+  // A fresh notice about the same declaration: new id and time, same content.
+  // The declaration itself is signed once, at start-up, and never on a timer.
+  const sign = () => {
     const notice = {
       // Format 0.2 only when there is something it adds; 0.1 otherwise, for the widest readership.
       notice: resolved.length ? '0.2' : '0.1',
       id: `published-${digest.slice(7, 19)}-${Date.now().toString(36)}`,
       event: 'declaration-published',
       provenance_id: provenanceId,
-      key_fingerprint: await keyFingerprint(publicKey),
+      key_fingerprint: fingerprint,
       issued_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       claims: {
         declaration_url: url,
@@ -189,7 +200,11 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
         ...(resolved.length ? { resolved } : {}),
       },
     };
-    published = { ...notice, signature: signNotice(key, notice) };
+    return { ...notice, signature: signNotice(key, notice) };
+  };
+  if (url) {
+    published = sign();
+    renew = sign;
   } else {
     warn('No declarationUrl and no standard location for this provenance_id, so no published notice is issued.');
   }
@@ -203,6 +218,8 @@ export async function prepare({ declaration, privateKey, version, declarationUrl
     json: `${JSON.stringify(body, null, 2)}\n`,
     published,
     notices: [published, ...notices].filter(Boolean),
+    extraNotices: notices,
+    renew,
   };
 }
 
@@ -286,6 +303,7 @@ export async function handler(options = {}) {
     privateKey,
     notify = [],
     onNotify,
+    renewEvery,
   } = options;
 
   const prepared = await prepare(options);
@@ -296,10 +314,33 @@ export async function handler(options = {}) {
     warn('notify is set but no published notice could be issued, so nothing was sent.');
   } else if (notify.length) {
     // Not awaited: start-up must not wait on, or fail because of, a watcher.
-    sendNotice(prepared.published, notify, onNotify);
+    sendNotice(prepared.published, notify, onNotify).catch((e) => warn(`Notify failed: ${e.message}`));
   }
 
-  return async function provenanceHandler(request) {
+  // A service that runs for weeks is only heard from at start-up unless it
+  // speaks again: for an internal service using deliverDeclaration that
+  // start-up notice is the only proof it is still running as declared, so
+  // watchers would see it go stale while nothing is wrong. Renew it.
+  let timer = null;
+  const every = renewEvery === undefined ? (notify.length ? DEFAULT_RENEW_MS : 0) : Number(renewEvery) || 0;
+  if (every > 0 && notify.length && prepared.renew) {
+    const floor = Number(process.env.PROVENANCE_TEST_MIN_INTERVAL) || MIN_RENEW_MS; // test hook only
+    let ms = Math.min(every, MAX_TIMER_MS);
+    if (ms < floor) { warn(`renewEvery ${every} ms is below the minimum; using ${floor} ms.`); ms = floor; }
+    timer = setInterval(() => {
+      try {
+        const fresh = prepared.renew();
+        // Keep the feed bounded: the latest renewal, the start-up notice, your own notices.
+        prepared.notices = [fresh, prepared.published, ...prepared.extraNotices].filter(Boolean);
+        sendNotice(fresh, notify, onNotify).catch((e) => warn(`Renewal delivery failed: ${e.message}`));
+      } catch (e) {
+        warn(`Could not renew the published notice: ${e.message}`);
+      }
+    }, ms);
+    timer.unref?.();
+  }
+
+  const provenanceHandler = async function provenanceHandler(request) {
     const { pathname } = new URL(request.url);
 
     if (pathname === declarationPath) {
@@ -388,6 +429,9 @@ export async function handler(options = {}) {
 
     return null;
   };
+  /** Stop renewing (for graceful shutdown and tests). */
+  provenanceHandler.stop = () => { if (timer) clearInterval(timer); timer = null; };
+  return provenanceHandler;
 }
 
 /**
@@ -416,7 +460,7 @@ export function provenance(options = {}) {
     options.noticesPath ?? NOTICES_PATH,
   ]);
 
-  return function provenanceMiddleware(req, res, next) {
+  const middleware = function provenanceMiddleware(req, res, next) {
     const pathname = (req.originalUrl ?? req.url ?? '').split('?')[0];
     if (!paths.has(pathname)) return next();
 
@@ -447,6 +491,9 @@ export function provenance(options = {}) {
       })
       .catch(next);
   };
+  /** Stop renewing (for graceful shutdown and tests). */
+  middleware.stop = () => ready.then((r) => r.fn?.stop?.());
+  return middleware;
 }
 
 function readBody(req) {

@@ -131,6 +131,7 @@ const { declaration, json } = await prepare({ declaration: './PROVENANCE.yml' })
 | `onNotify` | Called with each delivery outcome. |
 | `notices` | Further signed notices to publish, e.g. incidents. |
 | `deliverDeclaration` | Include the full signed declaration in the published notice, for internal services. |
+| `renewEvery` | With `notify` set, re-send a freshly signed "declaration published" notice to the watchers this often, in milliseconds. Default 12 hours; minimum 5 minutes; `false` turns it off. |
 | `reportResolved` | Report which version of each declared npm dependency is actually installed (from `package-lock.json`, or the path given), so watchers can compare it with the declaration's pins (spec 0.3). |
 
 ## Notices — telling watchers what changed
@@ -180,6 +181,10 @@ The start-up notice then carries a signed `resolved` list, read from the
 lockfile you deploy — only the dependencies your declaration names. A watcher
 compares it with the pins: a pin that looks honoured but is not shows up as a
 mismatch.
+
+A long-running internal service is heard from again every 12 hours by default
+(`renewEvery`), so watchers can tell it is still running as declared without
+waiting for a restart. Call `stop()` on the middleware or handler at shutdown.
 
 Your organisation then vouches for the agent with
 `npx provenance-protocol affiliate` — see provenance-protocol, *Internal agents*.

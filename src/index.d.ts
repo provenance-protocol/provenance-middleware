@@ -54,6 +54,12 @@ export interface ProvenanceOptions {
    */
   reportResolved?: boolean | string;
   /**
+   * With `notify` set, re-send a freshly signed declaration-published notice to
+   * the watchers this often (ms). Default 12 hours; minimum 5 minutes; false or
+   * 0 turns it off. Keeps a long-running internal service from looking stale.
+   */
+  renewEvery?: number | false;
+  /**
    * Watchers to send the signed "declaration published" notice to at startup —
    * any attester, several, or none. Nothing is sent by default.
    */
@@ -104,7 +110,7 @@ export function prepare(options: ProvenanceOptions): Promise<PreparedDeclaration
  */
 export function handler(
   options: ProvenanceOptions
-): Promise<(request: Request) => Promise<Response | null>>;
+): Promise<((request: Request) => Promise<Response | null>) & { /** Stop renewing notices. */ stop(): void }>;
 
 /**
  * Express / Connect middleware.
@@ -115,4 +121,4 @@ export function handler(
  */
 export function provenance(
   options: ProvenanceOptions
-): (req: unknown, res: unknown, next: (err?: unknown) => void) => void;
+): ((req: unknown, res: unknown, next: (err?: unknown) => void) => void) & { /** Stop renewing notices. */ stop(): Promise<void> };
