@@ -131,6 +131,7 @@ const { declaration, json } = await prepare({ declaration: './PROVENANCE.yml' })
 | `onNotify` | Called with each delivery outcome. |
 | `notices` | Further signed notices to publish, e.g. incidents. |
 | `deliverDeclaration` | Include the full signed declaration in the published notice, for internal services. |
+| `index` | `{ agents: [{ provenance_id, name? }], operator? }` — serve a site index at `/.well-known/provenance/index.json` listing this service's declaration and the others your site publishes, so anyone who knows only your website can find them all. |
 | `renewEvery` | With `notify` set, re-send a freshly signed "declaration published" notice to the watchers this often, in milliseconds. Default 12 hours; minimum 5 minutes; `false` turns it off. |
 | `reportResolved` | Report which version of each declared npm dependency is actually installed (from `package-lock.json`, or the path given), so watchers can compare it with the declaration's pins (spec 0.3). |
 

@@ -32,6 +32,9 @@ import { declarationDigest, keyFingerprint, locateDeclaration } from 'provenance
 
 /** Where a declaration is served from. Same shape as robots.txt: a fixed path. */
 export const DECLARATION_PATH = '/.well-known/provenance.json';
+/** Where a site lists every declaration it publishes (site index 0.1). */
+export const INDEX_PATH = '/.well-known/provenance/index.json';
+
 /** Where key-control challenges are answered. */
 export const CHALLENGE_PATH = '/.well-known/provenance/challenge';
 /** Where this service's recent signed notices are published, newest first. */
@@ -300,6 +303,8 @@ export async function handler(options = {}) {
     declarationPath = DECLARATION_PATH,
     challengePath = CHALLENGE_PATH,
     noticesPath = NOTICES_PATH,
+    indexPath = INDEX_PATH,
+    index,
     privateKey,
     notify = [],
     onNotify,
@@ -340,8 +345,31 @@ export async function handler(options = {}) {
     timer.unref?.();
   }
 
+  // A site index lists the passports this site publishes — this service's own
+  // among them — so anyone who knows only the website can find them all.
+  // A pointer, never proof: each is still verified at its own location.
+  if (index !== undefined && (typeof index !== 'object' || !Array.isArray(index.agents))) {
+    throw new ProvenanceMiddlewareError('index must be { agents: [{ provenance_id, name? }], operator? }');
+  }
+  const indexAgents = index ? [
+    { provenance_id: prepared.provenanceId, ...(prepared.declaration.name ? { name: String(prepared.declaration.name) } : {}) },
+    ...index.agents.filter((a) => a?.provenance_id && a.provenance_id !== prepared.provenanceId)
+      .map((a) => ({ provenance_id: String(a.provenance_id), ...(a.name ? { name: String(a.name) } : {}) })),
+  ].slice(0, 1000) : null;
+
   const provenanceHandler = async function provenanceHandler(request) {
-    const { pathname } = new URL(request.url);
+    const { pathname, host } = new URL(request.url);
+
+    if (indexAgents && pathname === indexPath) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json(405, { error: 'Method not allowed' }, { Allow: 'GET, HEAD' });
+      }
+      const body = { provenance_index: '0.1', site: host.toLowerCase(), ...(index.operator ? { operator: index.operator } : {}), agents: indexAgents };
+      return new Response(request.method === 'HEAD' ? null : `${JSON.stringify(body, null, 2)}\n`, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=300' },
+      });
+    }
 
     if (pathname === declarationPath) {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -458,6 +486,7 @@ export function provenance(options = {}) {
     options.declarationPath ?? DECLARATION_PATH,
     options.challengePath ?? CHALLENGE_PATH,
     options.noticesPath ?? NOTICES_PATH,
+    ...(options.index ? [options.indexPath ?? INDEX_PATH] : []),
   ]);
 
   const middleware = function provenanceMiddleware(req, res, next) {

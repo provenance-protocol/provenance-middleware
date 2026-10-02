@@ -10,6 +10,8 @@ export const DECLARATION_PATH: '/.well-known/provenance.json';
 /** Where key-control challenges are answered. */
 export const CHALLENGE_PATH: '/.well-known/provenance/challenge';
 /** Where recent signed notices are published, newest first. */
+/** Where a site lists every declaration it publishes. */
+export const INDEX_PATH: '/.well-known/provenance/index.json';
 export const NOTICES_PATH: '/.well-known/provenance/notices';
 
 export class ProvenanceMiddlewareError extends Error {
@@ -59,6 +61,14 @@ export interface ProvenanceOptions {
    * 0 turns it off. Keeps a long-running internal service from looking stale.
    */
   renewEvery?: number | false;
+  /**
+   * Serve a site index (format 0.1) at /.well-known/provenance/index.json listing
+   * this service's declaration and the others the site publishes, so anyone who
+   * knows only the website can find them all. Each is still verified at its own location.
+   */
+  index?: { agents: { provenance_id: string; name?: string }[]; operator?: string };
+  /** Defaults to /.well-known/provenance/index.json */
+  indexPath?: string;
   /**
    * Watchers to send the signed "declaration published" notice to at startup —
    * any attester, several, or none. Nothing is sent by default.

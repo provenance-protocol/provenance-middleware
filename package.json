@@ -1,6 +1,6 @@
 {
   "name": "provenance-middleware",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "One line that makes a service self-describing: serves its signed Provenance declaration, answers key-control challenges, and reports its running version",
   "type": "module",
   "license": "Apache-2.0",
@@ -34,10 +34,10 @@
     "NOTICE"
   ],
   "scripts": {
-    "test": "node test/middleware.test.mjs && node test/express.test.mjs && node test/notices.test.mjs && node test/resolved.test.mjs && node test/renew.test.mjs"
+    "test": "node test/middleware.test.mjs && node test/express.test.mjs && node test/notices.test.mjs && node test/resolved.test.mjs && node test/renew.test.mjs && node test/index.test.mjs"
   },
   "dependencies": {
-    "provenance-protocol": "^0.14.0",
+    "provenance-protocol": "^0.15.0",
     "yaml": "^2.9.1"
   }
 }
